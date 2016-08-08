@@ -20,8 +20,19 @@
 define('APPOTA_PAY_TRANSACTION_STATUS_COMPLETED', 1);
 
 Class AppotaPaymentGatewayReceiver extends Controller {
+    
+    private $API_KEY;
+    private $SECRET_KEY;
+    
+    public function __construct($config, $registry)
+    {
+        $this->registry = $registry;
+        // set params
+        $this->API_KEY = $config['api_key'];
+        $this->SECRET_KEY = $config['secret_key'];
+    }
 
-    public function checkValidRequest($get) {
+    public function checkValidRequest($data) {
 
         if (!$this->hasCurl()) {
             return array(
@@ -29,13 +40,7 @@ Class AppotaPaymentGatewayReceiver extends Controller {
                 'message' => 'Kiểm tra curl trên server'
             );
         }
-        $signature = $get['signature'];
-        $data['order_id'] = $get['merchant_order_id'];
-        $data['transaction_id'] = $get['transaction_id'];
-        $data['transaction_status'] = $get['transaction_status'];
-        $data['total_amount'] = $get['total_amount'];
-
-        if (!$this->verifySignature($data, $signature, $this->appota_api_secret)) {
+        if (!$this->verifySignature($data, $this->SECRET_KEY)) {
             return array(
                 'error_code' => 103,
                 'message' => 'Sai signature gửi đến. Không thể thực hiện thanh toán!'
@@ -48,16 +53,15 @@ Class AppotaPaymentGatewayReceiver extends Controller {
         );
     }
 
-    public function checkValidOrder($get) {
-        $order_id = (int) $get['merchant_order_id'];
-        $transaction_status = (int) $get['transaction_status'];
-        $total_amount = floatval($get['total_amount']);
+    public function checkValidOrder($data) {
+        $order_id = (int) $data['order_id'];
+        $transaction_status = (int) $data['status'];
+        $total_amount = floatval($data['amount']);
 
         $confirm = '';
 
         //Kiểm tra trạng thái giao dịch
         if ($transaction_status == APPOTA_PAY_TRANSACTION_STATUS_COMPLETED) {
-
             //Lấy thông tin order
             if (!is_numeric($order_id) && ($order_id == 0)) {
                 $confirm .= "\r\n" . ' Không nhận được mã đơn hàng nào : ' . $order_id;
@@ -67,9 +71,8 @@ Class AppotaPaymentGatewayReceiver extends Controller {
                 );
             }
             $this->load->model('checkout/order');
-
+            
             $order_info = $this->model_checkout_order->getOrder($order_id);
-
             //Kiểm tra sự tồn tại của đơn hàng
             if (empty($order_info)) {
                 $confirm .= "\r\n" . ' Đơn hàng với mã đơn : ' . $order_id . ' không tồn tại trên hệ thống';
@@ -97,8 +100,6 @@ Class AppotaPaymentGatewayReceiver extends Controller {
                 'message' => $confirm
             );
         }
-
-
         if ($confirm == '') {
             return array(
                 'error_code' => 0,
@@ -120,10 +121,15 @@ Class AppotaPaymentGatewayReceiver extends Controller {
         return function_exists('curl_version');
     }
 
-    private function verifySignature($data, $signature, $secret_key) {
-        $str_data = serialize($data) . $secret_key;
-        $compare_signature = hash('sha256', $str_data);
-        if ($compare_signature == $signature) {
+    private function verifySignature($data, $secret_key) {
+        $signature = $data['signature'];
+	unset($data['signature']);
+        unset($data['route']);
+	ksort($data);
+        $data_str = implode('', $data);
+        $secret = pack('H*', strtoupper(md5($secret_key)));
+        $new_signature = hash_hmac('sha256', $data_str, $secret);
+        if($signature == $new_signature) {
             return true;
         } else {
             return false;

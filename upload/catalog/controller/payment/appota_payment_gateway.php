@@ -8,7 +8,8 @@ class ControllerPaymentAppotaPaymentGateway extends Controller {
 
     protected $logger;
 
-    public function index() {
+    public function index() {        
+        
         $this->load->language('payment/appota_payment_gateway');
         $data = array();
         $data['button_confirm'] = $this->language->get('button_confirm');
@@ -47,24 +48,30 @@ class ControllerPaymentAppotaPaymentGateway extends Controller {
         
         $payer_name = $order_info['payment_lastname'] . $order_info['payment_firstname'];
 
-        $order_id_by_time = time() . $this->session->data['order_id'];
-        $params = array();
-        $params['order_id_by_time'] = strval($order_id_by_time);
-        $params['merchant_order_id'] = $this->session->data['order_id'];
-        $params['total_amount'] = $total_amount;
-        $params['shipping_fee'] = $shipping_fee;
-        $params['tax_fee'] = '';
+        $params['order_id'] = (int)$this->session->data['order_id'];
+        $params['total_amount'] = strval($total_amount);
+        $params['shipping_fee'] = strval($shipping_fee);
+        $params['tax_fee'] = strval("0");
         $params['currency_code'] = $order_info['currency_code'];
-        $params['order_description'] = $order_info['comment'];
-
         $params['url_success'] = $url_success;
         $params['url_cancel'] = $url_cancel;
-
+        $params['order_description'] = $order_info['comment'];
         $params['payer_name'] = $payer_name;
         $params['payer_email'] = $order_info['email'];
         $params['payer_phone_no'] = $order_info['telephone'];
         $params['payer_address'] = $order_info['shipping_address_1'] . " - " . $order_info['shipping_city'];
-
+        $params['ip'] = $this->auto_reverse_proxy_pre_comment_user_ip();
+        $params['user_agent'] = $_SERVER['HTTP_USER_AGENT'];
+        $products = $this->cart->getProducts();
+        $items_data = array();
+        foreach($products as $product) {
+            $items_data[$product['product_id']]['id'] = $product['product_id'];
+            $items_data[$product['product_id']]['name'] = $product['name'];
+            $items_data[$product['product_id']]['quantity'] = $product['quantity'];
+            $items_data[$product['product_id']]['price'] = $product['price'];
+        }
+        $params['product_info'] = json_encode($items_data);
+        
         $config = array();
         $config['api_key'] = $this->config->get('appota_payment_gateway_apikey');
         $config['lang'] = $this->language->get('code');
@@ -88,7 +95,7 @@ class ControllerPaymentAppotaPaymentGateway extends Controller {
             $this->logger->writeLog($result['message']);
         }
         if ($noError) {
-            $appota_payment_url = $result['redirect_url'];
+            $appota_payment_url = $result['data']['payment_url'];
             $comment_status = "Success: Redirect Payment Url -> " . $appota_payment_url;
             $this->model_checkout_order->addOrderHistory($this->session->data['order_id'], $this->config->get('config_order_status_id'), $comment_status, false, false);
                 
@@ -103,7 +110,12 @@ class ControllerPaymentAppotaPaymentGateway extends Controller {
     public function success() {
         $registry = $this->registry;
         $this->logger = new AppotaPaymentGatewayLogger($registry);
-        $receiver = new AppotaPaymentGatewayReceiver($registry);
+        
+        $config['api_key'] = $this->config->get('appota_payment_gateway_apikey');
+        $config['secret_key'] = $this->config->get('appota_payment_gateway_apisecret');
+        
+        $receiver = new AppotaPaymentGatewayReceiver($config, $registry);
+        
         $check_valid_request = $receiver->checkValidRequest($_GET);
         $message = "";
         if ($check_valid_request['error_code'] == 0) {
@@ -138,6 +150,26 @@ class ControllerPaymentAppotaPaymentGateway extends Controller {
         $this->load->language('payment/appota_payment_gateway');
         $this->session->data['error'] = $this->language->get('error_cancel_payment_message');
         $this->response->redirect($this->url->link('checkout/cart'));
+    }
+    
+    function auto_reverse_proxy_pre_comment_user_ip() {
+        $REMOTE_ADDR = $_SERVER['REMOTE_ADDR'];
+        if (!empty($_SERVER['X_FORWARDED_FOR'])) {
+            $X_FORWARDED_FOR = explode(',', $_SERVER['X_FORWARDED_FOR']);
+            if (!empty($X_FORWARDED_FOR)) {
+                $REMOTE_ADDR = trim($X_FORWARDED_FOR[0]);
+            }
+        }
+        /*
+         * Some php environments will use the $_SERVER['HTTP_X_FORWARDED_FOR'] 
+         * variable to capture visitor address information.
+         */ elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+            $HTTP_X_FORWARDED_FOR = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+            if (!empty($HTTP_X_FORWARDED_FOR)) {
+                $REMOTE_ADDR = trim($HTTP_X_FORWARDED_FOR[0]);
+            }
+        }
+        return preg_replace('/[^0-9a-f:\., ]/si', '', $REMOTE_ADDR);
     }
 
 }
